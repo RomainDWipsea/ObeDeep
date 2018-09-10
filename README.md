@@ -3,7 +3,9 @@
 This project aims at gathering in one place the most recent deeplearning object detection networks.
 All codes should be in pure pytorch code and ready to use in order to be able to compare the outputs with ease.
 ## Development
-- [ ] Write the first README.md
+- [x] Write the first README.md
+- [x] Load an object detection dataset (VOC style)
+- [ ] Implement automatic data augmentation
 - [ ] Implement Yolov3
 - [ ] Implement FasterRCNN
 - [ ] Implement Retinanet
@@ -16,25 +18,43 @@ These instructions will get you a copy of the project up and running on your loc
 
 * Python 3.5.4
 * pytorch 0.4.1
-* jupyter
 * CUDA 9.0
 * CUDNN 7
 
 ### Installing
 * Clone this repository
 ```
-git clone https://github.com/RomainDWipsea/ObeDeep.git
+# obeDeep=/path/to/clone/detectron
+git clone https://github.com/RomainDWipsea/ObeDeep.git $obeDeep
 ```
 
-* Go to the root directory and enter : 
+Install Python dependencies:
+```
+pip3 install -r $obeDeep/requirements.txt
+```
+
+* If you want to try out the first classification network, got to $obeDeep and enter : 
 ```
 jupyter notebook extractFishermanFeatures.ipynb
 ```
 
-## Built With
+## Data
+### For Object detection :
+All data are stored in Pascal VOC fashion with multiple folders :
+- Annotations
+  |- img1.xml
+  |- 1 annotation file per image in the xml format.
+- ImageSets
+  |- train.txt
+  |- val.txt
+  |- test.txt
+  |- ...
+- JPEGImages
+  |- img1.jpg
+  |- All images regardless of the training/test set
 
 ## Contributing
-Contribution are not open at the moment, please contact me if you want to add something  romain.dambreville@irisa.fr
+Contribution are not open at the moment, please contact me if you want to add something : romain.dambreville@irisa.fr
 
 ## Versioning
 - [ ] No release are available yet.
