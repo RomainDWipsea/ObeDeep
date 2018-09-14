@@ -70,6 +70,7 @@ This project has currently no license, we whould update it soon
 
 ## Acknowledgments
 
-* README.md template from https://gist.github.com/PurpleBooth/109311bb0361f32d87a2#file-readme-template-md
+* [README.md]{https://gist.github.com/PurpleBooth/109311bb0361f32d87a2#file-readme-template-md} template from 
+* [yolo from scratch]{https://blog.paperspace.com/how-to-implement-a-yolo-object-detector-in-pytorch/}
 * etc
 

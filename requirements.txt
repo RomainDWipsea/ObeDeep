@@ -1,5 +1,5 @@
 jupyter
-opencv-python>=3.4.2
+PIL>=5.2.0
 lxml>=4.2.3
 shutil
 pandas>=0.23.4

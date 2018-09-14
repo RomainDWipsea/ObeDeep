@@ -4,6 +4,7 @@ from io import StringIO, BytesIO
 import torch
 import shutil
 import glob, os
+
 def slidingWindow(image, stepWidth, stepHeight, windowSize):
     for y in range(0, image.shape[0], stepHeight):
         for x in range(0, image.shape[1], stepWidth):
@@ -17,11 +18,6 @@ def get_n_params(model):
             nn = nn*s
             pp += nn
     return pp
-        
-def showImage(img):
-    cv2.imshow('image',img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
     
 def printXml(patch_name,out_folder,x,y,windowWidth,windowHeight,C,gt):
     # <annotation/>

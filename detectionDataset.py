@@ -4,7 +4,6 @@ import torch
 import pandas as pd
 import PIL
 from PIL import Image
-#import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -67,7 +66,6 @@ class objDet(Dataset):
     def __getitem__(self, idx):
         name = self.detDataset[idx]["name"]
         img_path = self.root_dir + "JPEGImages/" + self.detDataset[idx]["name"]
-        #image = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
         image = Image.open(img_path)
         label = self.detDataset[idx]["objects"]
         sample = {'image': image, 'label': label, 'name': name}
@@ -77,10 +75,8 @@ class objDet(Dataset):
 
         return sample
 
-#    def get_classes(self):
- #       return self.classes
-
     def show_sample(self, idx):
+        ''' Show a dataset sample with plotted ground truth if present'''
         sample = self.__getitem__(idx)
         image, label, name = sample['image'], sample['label'], sample['name']
 
@@ -89,19 +85,16 @@ class objDet(Dataset):
     
         plt.xticks([]), plt.yticks([])  # to hide tick values on X and Y axis
 
-        # Display the image
-
-        # if image is tensor, then convert it
-        #if image.shape[2]>4:
+        # If image is a tensor (after ToTensor) transform it back just for showing
         if torch.is_tensor(image):
             trans = transforms.ToPILImage()
             img = trans(image)
-            #title = name + " (" + str(image.shape[2])+","+str(image.shape[1])+")"
-            #image = np.transpose(image, (1,2,0))
-        #else:
-         #   title = name + " (" + str(image.shape[1])+","+str(image.shape[0])+")"
+        else:
+            img = image
+            
         title = name + " (" + str(img.width) + "," +str(img.height)+ ")"
         ax.imshow(np.asarray(img))
+
         classes = self.classes
         # Create a Rectangle patch
         for obj in label:
@@ -109,6 +102,7 @@ class objDet(Dataset):
             objy = obj[1]-int(obj[3]/2)
             ax.add_patch(patches.Rectangle((objx,objy),obj[2],obj[3],linewidth=1,edgecolor='r',facecolor='none'))
             ax.text(objx+3, objy+(obj[3]-3), classes[obj[4]], color='r')
+
         plt.title(title)
         plt.show()
 
@@ -118,13 +112,10 @@ class ToTensor(object):
     def __call__(self, sample):
         image, label, name = sample['image'], sample['label'], sample['name']
         trans = transforms.ToTensor()
-        #image = image/255.0
-        # swap color axis because
         # opencv uses BGR and H x W x C
         # numpy image: H x W x C
         # torch image: C X H X W
-        #image = image.transpose((2, 0, 1))
-        return {'image': trans(image), #torch.from_numpy(image),
+        return {'image': trans(image),
                 'label': label,
                 'name' : name}
 
@@ -155,7 +146,6 @@ class Rescale(object):
 
         new_h, new_w = int(new_h), int(new_w)
 
-        #img = cv2.resize(image, (new_w, new_h))
         img = image.resize((new_w, new_h))
             
         ratio_w = new_w/w
@@ -172,12 +162,26 @@ class Rescale(object):
         return {'image': img, 'label': label, 'name': name}
 
 class letterbox_image(object):
+    """ Resizes the sample, keeping the aspect ratio consistent,
+        and padding the left out areas with the color (128,128,128)
+
+    Args:
+        output_size (tuple or int): Desired output size. If tuple, output is
+        matched to output_size. If int, smaller of image edges is matched
+        to output_size keeping aspect ratio the same.
+    """
     def __init__(self, output_size):
         assert isinstance(output_size, (int, tuple))
         self.output_size = output_size
 
     def __call__(self, sample):
-        '''resize image with unchanged aspect ratio using padding'''
+        """
+        Args:
+            sample (dict{PIL Image, list, string}): sample to be resized.
+
+        Returns:
+            dict{PIL Image, list, string}: Resized image.
+        """
         image, label, name = sample['image'], sample['label'], sample['name']
         
         img_w, img_h = image.width, image.height
@@ -190,15 +194,9 @@ class letterbox_image(object):
             out_h, out_w = self.output_size
 
         out_h, out_w = int(out_h), int(out_w)
-        print(out_h)
-        print(out_w)
-
         new_w = int(img_w * min(out_w/img_w, out_h/img_h))
         new_h = int(img_h * min(out_w/img_w, out_h/img_h))
-        print(new_h)
-        print(new_w)
 
-        #resized_image = cv2.resize(image, (new_w,new_h), interpolation = cv2.INTER_CUBIC)
         resized_image = image.resize((new_w,new_h), PIL.Image.BICUBIC)
         
         canvas = np.full((out_h, out_w, 3), 128)
@@ -219,13 +217,31 @@ class letterbox_image(object):
             
         return {'image': im, 'label': label, 'name': name}
 
+    def __repr__(self):
+        if isinstance(self.output_size, int):
+            return self.__class__.__name__ + '(output size = {})'.format(self.output_size)
+        else:
+            return self.__class__.__name__ + '(output size = ({},{}))'.format(self.output_size[0],
+                                                                              self.output_size[1])
+
 class RandomVerticalFlip(object):
+    """Vertically flip the given sample randomly with a given probability.
+
+    Args:
+        p (float): probability of the image being flipped. Default value is 0.5
+    """
     def __init__(self, p=0.5):
-        assert isinstance(p, float)
+        assert 0 <= p <= 1
         self.probability = p
 
     def __call__(self, sample):
-        ''' Verticaly flip the sample and its ground truth'''
+        """
+        Args:
+            sample (dict{PIL Image, list, string}): sample to be flipped.
+
+        Returns:
+            dict{PIL Image, list, string}: Randomly flipped image.
+        """
         image, label, name = sample['image'], sample['label'], sample['name']
         if random.random() < self.probability:
             tr = transforms.RandomVerticalFlip(1)
@@ -239,5 +255,44 @@ class RandomVerticalFlip(object):
                 new_label.append([n_cx,n_cy,n_w,n_h,obj[4]])
             label = new_label
         return {'image': image, 'label': label, 'name': name}
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(probability = {})'.format(self.probability)
+
+class ColorJitter(object):
+    """Randomly change the brightness, contrast and saturation of a sample
+
+    Args:
+        brightness (float): How much to jitter brightness. brightness_factor
+            is chosen uniformly from [max(0, 1 - brightness), 1 + brightness].
+        contrast (float): How much to jitter contrast. contrast_factor
+            is chosen uniformly from [max(0, 1 - contrast), 1 + contrast].
+        saturation (float): How much to jitter saturation. saturation_factor
+            is chosen uniformly from [max(0, 1 - saturation), 1 + saturation].
+        hue(float): How much to jitter hue. hue_factor is chosen uniformly from
+            [-hue, hue]. Should be >=0 and <= 0.5.
+    """
+    def __init__(self, brightness=0, contrast=0, saturation=0, hue=0):
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
         
+    def __call__(self, sample):
+        """
+        Args:
+            sample (dict{PIL Image, list, string}): sample to be flipped.
+
+        Returns:
+            dict{PIL Image, list, string}: Randomly flipped image.
+        """
+        image, label, name = sample['image'], sample['label'], sample['name']
+        tr = transforms.ColorJitter(self.brightness, self.contrast,
+                                    self.saturation, self.hue)
+        image = tr(image)
+        return {'image': image, 'label': label, 'name': name}
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(brightness = {}, contrast = {}, saturation = {}, hue = {})'.format(self.brightness, self.contrast, self. saturation, self.hue)
+     
         
