@@ -2,7 +2,9 @@ from __future__ import print_function, division
 import os
 import torch
 import pandas as pd
-import cv2
+import PIL
+from PIL import Image
+#import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -65,7 +67,8 @@ class objDet(Dataset):
     def __getitem__(self, idx):
         name = self.detDataset[idx]["name"]
         img_path = self.root_dir + "JPEGImages/" + self.detDataset[idx]["name"]
-        image = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        #image = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+        image = Image.open(img_path)
         label = self.detDataset[idx]["objects"]
         sample = {'image': image, 'label': label, 'name': name}
 
@@ -89,12 +92,16 @@ class objDet(Dataset):
         # Display the image
 
         # if image is tensor, then convert it
-        if image.shape[2]>4:
-            title = name + " (" + str(image.shape[2])+","+str(image.shape[1])+")"
-            image = np.transpose(image, (1,2,0))
-        else:
-            title = name + " (" + str(image.shape[1])+","+str(image.shape[0])+")"
-        ax.imshow(image)
+        #if image.shape[2]>4:
+        if torch.is_tensor(image):
+            trans = transforms.ToPILImage()
+            img = trans(image)
+            #title = name + " (" + str(image.shape[2])+","+str(image.shape[1])+")"
+            #image = np.transpose(image, (1,2,0))
+        #else:
+         #   title = name + " (" + str(image.shape[1])+","+str(image.shape[0])+")"
+        title = name + " (" + str(img.width) + "," +str(img.height)+ ")"
+        ax.imshow(np.asarray(img))
         classes = self.classes
         # Create a Rectangle patch
         for obj in label:
@@ -110,13 +117,14 @@ class ToTensor(object):
 
     def __call__(self, sample):
         image, label, name = sample['image'], sample['label'], sample['name']
-        image = image/255.0
+        trans = transforms.ToTensor()
+        #image = image/255.0
         # swap color axis because
         # opencv uses BGR and H x W x C
         # numpy image: H x W x C
         # torch image: C X H X W
-        image = image.transpose((2, 0, 1))
-        return {'image': torch.from_numpy(image),
+        #image = image.transpose((2, 0, 1))
+        return {'image': trans(image), #torch.from_numpy(image),
                 'label': label,
                 'name' : name}
 
@@ -136,7 +144,7 @@ class Rescale(object):
     def __call__(self, sample):
         image, label, name = sample['image'], sample['label'], sample['name']
 
-        h, w, c = image.shape
+        w,h = image.size
         if isinstance(self.output_size, int):
             if h > w:
                 new_h, new_w = self.output_size * h / w, self.output_size
@@ -147,7 +155,8 @@ class Rescale(object):
 
         new_h, new_w = int(new_h), int(new_w)
 
-        img = cv2.resize(image, (new_w, new_h))
+        #img = cv2.resize(image, (new_w, new_h))
+        img = image.resize((new_w, new_h))
             
         ratio_w = new_w/w
         ratio_h = new_h/h
@@ -171,7 +180,7 @@ class letterbox_image(object):
         '''resize image with unchanged aspect ratio using padding'''
         image, label, name = sample['image'], sample['label'], sample['name']
         
-        img_w, img_h = image.shape[1], image.shape[0]
+        img_w, img_h = image.width, image.height
         if isinstance(self.output_size, int):
             if img_h > img_w:
                 out_h, out_w = self.output_size * img_h / img_w, self.output_size
@@ -189,7 +198,8 @@ class letterbox_image(object):
         print(new_h)
         print(new_w)
 
-        resized_image = cv2.resize(image, (new_w,new_h), interpolation = cv2.INTER_CUBIC)
+        #resized_image = cv2.resize(image, (new_w,new_h), interpolation = cv2.INTER_CUBIC)
+        resized_image = image.resize((new_w,new_h), PIL.Image.BICUBIC)
         
         canvas = np.full((out_h, out_w, 3), 128)
 
@@ -205,5 +215,29 @@ class letterbox_image(object):
             n_h = int(obj[3]*ratio_h)
             new_label.append([n_cx,n_cy,n_w,n_h,obj[4]])
         label = new_label
+        im = Image.fromarray(np.uint8(canvas))
             
-        return {'image': canvas, 'label': label, 'name': name}
+        return {'image': im, 'label': label, 'name': name}
+
+class RandomVerticalFlip(object):
+    def __init__(self, p=0.5):
+        assert isinstance(p, float)
+        self.probability = p
+
+    def __call__(self, sample):
+        ''' Verticaly flip the sample and its ground truth'''
+        image, label, name = sample['image'], sample['label'], sample['name']
+        if random.random() < self.probability:
+            tr = transforms.RandomVerticalFlip(1)
+            image = tr(image)
+            new_label = []
+            for obj in label:
+                n_cx = obj[0]
+                n_cy = image.height - obj[1]
+                n_w = obj[2]
+                n_h = obj[3]
+                new_label.append([n_cx,n_cy,n_w,n_h,obj[4]])
+            label = new_label
+        return {'image': image, 'label': label, 'name': name}
+        
+        
