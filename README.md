@@ -53,6 +53,10 @@ All data are stored in Pascal VOC fashion with multiple folders :
   |- img1.jpg
   |- All images regardless of the training/test set
 
+## Networks
+All networks structures will be save as cfg files in the cfg/ folder.
+Parsing functions will then allow to load it and use it in pytorch.
+
 ## Contributing
 Contribution are not open at the moment, please contact me if you want to add something : romain.dambreville@irisa.fr
 
@@ -70,7 +74,7 @@ This project has currently no license, we whould update it soon
 
 ## Acknowledgments
 
-* [README.md](https://gist.github.com/PurpleBooth/109311bb0361f32d87a2#file-readme-template-md) template from 
+* [README.md](https://gist.github.com/PurpleBooth/109311bb0361f32d87a2#file-readme-template-md) template
 * [yolo from scratch](https://blog.paperspace.com/how-to-implement-a-yolo-object-detector-in-pytorch/)
 * etc
 
