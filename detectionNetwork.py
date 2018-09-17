@@ -3,21 +3,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F 
 from torch.autograd import Variable
+from torchvision import transforms, utils
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 import parseNet as pn
 from yoloUtils import *
 
 class DetectionNetwork(nn.Module):
-    def __init__(self, cfgfile):
+    """General object detection network."""
+    def __init__(self, cfgfile, cuda):
+        """
+        Args:
+            cfgfile (string): Absolute path of the cfg file
+            cuda (bool) : true if torch.cuda.is_available() is true
+        """
         super(DetectionNetwork, self).__init__()
         self.blocks = pn.parse_cfg(cfgfile)
         self.net_info, self.module_list = pn.create_modules(self.blocks)
+        self.cuda = cuda
+        self.toDevice(cuda)
 
-    def forward(self, x, CUDA):
+    def forward(self, x):
+        """
+        Args:
+            x (torch.Tensor): intput data
+
+        Returns:
+            torch.Tensor : detections int the format [Batch x 10647(nb_bbox) x 85(nb_class + 5)]
+        """
         modules = self.blocks[1:]
         outputs = {}   #We cache the outputs for the route layer
 
-        write = 0     #This is explained a bit later
+        write = 0     
         for i, module in enumerate(modules):        
             module_type = (module["type"])
             if module_type == "convolutional" or module_type == "upsample":
@@ -55,7 +73,7 @@ class DetectionNetwork(nn.Module):
 
                 #Transform 
                 x = x.data
-                x = predict_transform(x, inp_dim, anchors, num_classes, CUDA)
+                x = predict_transform(x, inp_dim, anchors, num_classes, self.cuda)
                 if not write:              #if no collector has been intialised. 
                     detections = x
                     write = 1
@@ -67,19 +85,36 @@ class DetectionNetwork(nn.Module):
                 
         return detections
 
-    def cuda(self, CUDA):
+    def toDevice(self, CUDA):
+        """ Send the model to either GPU or CPU according to CUDA value.
+
+        Args:
+            CUDA (bool): true if gpu is available
+
+        Returns:
+            none
+        """
         if(CUDA):
             #device = torch.device("cuda:0")
+            self.cuda = CUDA
             for i, module in enumerate(self.module_list):
-                self.module_list[i].cuda()#to(device)
+                self.module_list[i].cuda()
         else:
+            self.cuda = False
+            for i, module in enumerate(self.module_list):
+                self.module_list[i].cpu()
             print("no cuda GPU was found")
 
-    def cpu(self):
-        for i, module in enumerate(self.module_list):
-            self.module_list[i].cpu()
 
     def load_weights(self, weightfile):
+        """ load a weights file in the existing network (compatible with yolov3)
+
+        Args:
+            weightfile (string): Absolute path to the weight file
+
+        Returns:
+            none
+        """
         #Open the weights file
         fp = open(weightfile, "rb")
 
@@ -163,3 +198,59 @@ class DetectionNetwork(nn.Module):
 
                 conv_weights = conv_weights.view_as(conv.weight.data)
                 conv.weight.data.copy_(conv_weights)
+
+    def output(self, img, threshold = 0.5, nms = 0.3):
+        """ Infer detections on an image
+
+        Args:
+            img (PIL Image) : input image
+            threshold (float) : confidence threshold
+            nms (float) : non maximum suppression threshold
+
+        Returns:
+            None
+        """
+        assert 0 <= threshold <= 1
+        assert 0 <= nms <= 1
+        
+        self.module_list.eval()
+        img_ = img[np.newaxis,:,:,:]
+        if(self.cuda):
+            img_ = img_.cuda()
+
+        prediction = self.forward(Variable(img_, volatile = True))
+        prediction = write_results(prediction, threshold, 80, nms)
+        print(prediction.shape)
+        print(prediction)
+        print(img.shape)
+
+        prediction[0, [1,3]] = torch.clamp(prediction[0, [1,3]], 0.0, img.shape[1])
+        prediction[0, [2,4]] = torch.clamp(prediction[0, [2,4]], 0.0, img.shape[2])
+        print(prediction[0:])
+
+        # Create figure and axes
+        fig,ax = plt.subplots(1)
+    
+        plt.xticks([]), plt.yticks([])  # to hide tick values on X and Y axis
+
+        # If image is a tensor (after ToTensor) transform it back just for showing
+        if torch.is_tensor(img):
+            trans = transforms.ToPILImage()
+            img = trans(img)
+        title = "test" + " (" + str(img.width) + "," +str(img.height)+ ")"
+        ax.imshow(np.asarray(img))
+
+        # Create a Rectangle patch
+        bndBoxes = prediction[:,[1,2,3,4,7]]
+        bndboxes = bndBoxes.int()
+        print(bndBoxes)
+        for box in bndBoxes:
+            width = int(box[2]) - int(box[0])
+            height = int(box[3]) - int(box[1])
+            ax.add_patch(patches.Rectangle((int(box[0]),int(box[1])),width,height,linewidth=1,edgecolor='r',facecolor='none'))
+            ax.text(box[0]+3, box[1]+(height-3), str(int(box[4])), color='r')
+
+        plt.title(title)
+        plt.show()
+        
+        
