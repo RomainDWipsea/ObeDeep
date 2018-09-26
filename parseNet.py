@@ -127,6 +127,7 @@ def create_modules(blocks):
             anchors = [int(a) for a in anchors]
             anchors = [(anchors[i], anchors[i+1]) for i in range(0, len(anchors),2)]
             anchors = [anchors[i] for i in mask]
+            num_anchors = int(x['num'])
 
             detection = DetectionLayer(anchors)
             module.add_module("Detection_{}".format(index), detection)

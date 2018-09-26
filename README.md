@@ -5,8 +5,10 @@ All codes should be in pure pytorch code and ready to use in order to be able to
 ## Development
 - [x] Write the first README.md
 - [x] Load an object detection dataset (VOC style)
-- [ ] Implement automatic data augmentation
+- [x] Implement automatic data augmentation
 - [ ] Implement Yolov3
+  - [x] Infer
+  - [ ] Train
 - [ ] Implement FasterRCNN
 - [ ] Implement Retinanet
 

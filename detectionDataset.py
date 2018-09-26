@@ -119,6 +119,30 @@ class ToTensor(object):
                 'label': label,
                 'name' : name}
 
+class ToYolo(object):
+    """Convert object in sample to Tensors."""
+
+    def __call__(self, sample):
+        image, label, name = sample['image'], sample['label'], sample['name']
+        trans = transforms.ToTensor()
+        # opencv uses BGR and H x W x C
+        # numpy image: H x W x C
+        # torch image: C X H X W
+        height = image.height
+        width = image.width
+        new_labels = torch.zeros(30,5)
+        for i, obj in enumerate(label):
+            obj = obj[-1:]+obj[:-1]
+            new_labels[i][0] = obj[0]
+            new_labels[i][1] = float(obj[1]/width)
+            new_labels[i][2] = float(obj[2]/height)
+            new_labels[i][3] = float(obj[3]/width)
+            new_labels[i][4] = float(obj[4]/height)
+        
+        return {'image': trans(image),
+                'label': new_labels,
+                'name' : name}
+
 class Rescale(object):
     """Rescale the image in a sample to a given size.
 

@@ -23,11 +23,13 @@ class DetectionNetwork(nn.Module):
         self.net_info, self.module_list = pn.create_modules(self.blocks)
         self.cuda = cuda
         self.toDevice(cuda)
+        self.seen = 0
 
-    def forward(self, x):
+    def forward(self, x, target=None):
         """
         Args:
             x (torch.Tensor): intput data
+            target (torch.Tensor) : ground truth (for the training phase)
 
         Returns:
             torch.Tensor : detections int the format [Batch x 10647(nb_bbox) x 85(nb_class + 5)]
@@ -42,7 +44,7 @@ class DetectionNetwork(nn.Module):
                 x = self.module_list[i](x)
             elif module_type == "route":
                 layers = module["layers"]
-                print(layers)
+                #print(layers)
                 layers = [int(a) for a in layers]
 
                 if (layers[0]) > 0:
@@ -62,28 +64,94 @@ class DetectionNetwork(nn.Module):
                 from_ = int(module["from"])
                 x = outputs[i-1] + outputs[i+from_]
 
-            elif module_type == 'yolo':        
-
+            elif module_type == 'yolo':
                 anchors = self.module_list[i][0].anchors
+                anchor_step = 2
+                #print("num_anchors = %f" % len(anchors))
                 #Get the input dimensions
                 inp_dim = int (self.net_info["height"])
-
+                noobject_scale = 1
+                object_scale = 5
+                thresh = 0.6
+                seen = 0
+                coord_scale = 1
+                class_scale = 1
+                
                 #Get the number of classes
                 num_classes = int (module["classes"])
+                print("numclasses = %d" % num_classes)
+                #x = x.data
+                if self.training:
+                    nB = x.size(0)
+                    nA = int(len(anchors))#self.module_list[i][0].num_anchors #self.num_anchors
+                    nC = num_classes
+                    nH = x.size(2)
+                    nW = x.size(3)
 
-                #Transform 
-                x = x.data
-                x = predict_transform(x, inp_dim, anchors, num_classes, self.cuda)
-                if not write:              #if no collector has been intialised. 
-                    detections = x
-                    write = 1
+                    # read 2.1 in YOLOv3 paper
+                    x = x.view(nB, nA, (5+nC), nH, nW)
+                    xp = F.sigmoid(x.index_select(2, Variable(torch.cuda.LongTensor([0]))).view(nB, nA, nH, nW))
+                    y = F.sigmoid(x.index_select(2, Variable(torch.cuda.LongTensor([1]))).view(nB, nA, nH, nW))
+                    w  = x.index_select(2, Variable(torch.cuda.LongTensor([2]))).view(nB, nA, nH, nW)
+                    h  = x.index_select(2, Variable(torch.cuda.LongTensor([3]))).view(nB, nA, nH, nW)
+                    conf = F.sigmoid(x.index_select(2, Variable(torch.cuda.LongTensor([4]))).view(nB, nA, nH, nW))
+                    cls  = x.index_select(2, Variable(torch.linspace(5,5+nC-1,nC).long().cuda()))
+                    cls  = cls.view(nB*nA, nC, nH*nW).transpose(1,2).contiguous().view(nB*nA*nH*nW, nC)
+    
+                    pred_boxes = torch.cuda.FloatTensor(4, nB*nA*nH*nW)
+                    grid_x = torch.linspace(0, nW-1, nW).repeat(nH,1).repeat(nB*nA, 1, 1).view(nB*nA*nH*nW).cuda()
+                    grid_y = torch.linspace(0, nH-1, nH).repeat(nW,1).t().repeat(nB*nA, 1, 1).view(nB*nA*nH*nW).cuda()
+                    anchor_w = torch.Tensor(anchors).view(nA, anchor_step).index_select(1, torch.LongTensor([0])).cuda()
+                    anchor_h = torch.Tensor(anchors).view(nA, anchor_step).index_select(1, torch.LongTensor([1])).cuda()
+                    anchor_w = anchor_w.repeat(nB, 1).repeat(1, 1, nH*nW).view(nB*nA*nH*nW)
+                    anchor_h = anchor_h.repeat(nB, 1).repeat(1, 1, nH*nW).view(nB*nA*nH*nW)
 
-                else:       
-                    detections = torch.cat((detections, x), 1)
+                    pred_boxes[0] = xp.data.view(nB*nA*nH*nW) + grid_x
+                    pred_boxes[1] = y.data.view(nB*nA*nH*nW) + grid_y
+                    pred_boxes[2] = torch.exp(w.data.view(nB*nA*nH*nW)) * anchor_w
+                    pred_boxes[3] = torch.exp(h.data.view(nB*nA*nH*nW)) * anchor_h
+                    pred_boxes = convert2cpu(pred_boxes.transpose(0,1).contiguous().view(-1,4))
 
-            outputs[i] = x
+                    nGT, nCorrect, coord_mask, conf_mask, cls_mask, tx, ty, tw, th, tconf,tcls = build_targets(pred_boxes, target.data, anchors, nA, nC, \
+                                                                   nH, nW, noobject_scale, object_scale, thresh, seen)
+                    cls_mask = (cls_mask == 1)
+                    nProposals = int((conf > 0.25).sum().data[0])
+
+                    tx    = Variable(tx.cuda())
+                    ty    = Variable(ty.cuda())
+                    tw    = Variable(tw.cuda())
+                    th    = Variable(th.cuda())
+                    tconf = Variable(tconf.cuda())
+                    tcls  = Variable(tcls.view(-1)[cls_mask.view(-1)].long().cuda())
+                    
+                    coord_mask = Variable(coord_mask.cuda())
+                    conf_mask  = Variable(conf_mask.cuda().sqrt())
+                    cls_mask   = Variable(cls_mask.view(-1, 1).repeat(1,nC).cuda())
+                    cls = cls[cls_mask].view(-1, nC)
+
+                    loss_x = coord_scale * nn.MSELoss(size_average=False)(xp*coord_mask, tx*coord_mask)/2.0
+                    criterion = nn.MSELoss(size_average=False)
+                    loss_y = coord_scale * criterion(y*coord_mask, ty*coord_mask)/2.0
+                    loss_w = coord_scale * nn.MSELoss(size_average=False)(w*coord_mask, tw*coord_mask)/2.0
+                    loss_h = coord_scale * nn.MSELoss(size_average=False)(h*coord_mask, th*coord_mask)/2.0
+                    loss_conf = nn.MSELoss(size_average=False)(conf*conf_mask, tconf*conf_mask)/2.0
+                    loss_cls = class_scale * nn.CrossEntropyLoss(size_average=False)(cls, tcls)
+                    loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
+                else:
+                    x = predict_transform(x, inp_dim, anchors, num_classes, self.cuda)
+                    if not write:              #if no collector has been intialised. 
+                        detections = x
+                        write = 1
+                    else:       
+                        detections = torch.cat((detections, x), 1)
+            else:
+                print('unknown type %s' % (block['type']))
                 
-        return detections
+            outputs[i] = x
+        if self.training:
+            return loss
+        else:
+            return detections
 
     def toDevice(self, CUDA):
         """ Send the model to either GPU or CPU according to CUDA value.
@@ -252,5 +320,17 @@ class DetectionNetwork(nn.Module):
 
         plt.title(title)
         plt.show()
-        
-        
+
+    def train():
+        if not os.path.exists(backupdir):
+            os.mkdir(backupdir)
+    
+        ###############
+        torch.manual_seed(seed)
+
+        if self.cuda:
+            os.environ['CUDA_VISIBLE_DEVICES'] = gpus
+            torch.cuda.manual_seed(seed)
+
+        #model = Darknet(cfgfile)
+        region_loss = model.loss

@@ -5,9 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F 
 from torch.autograd import Variable
 import numpy as np
+import math
 
+def convert2cpu(gpu_matrix):
+    return torch.FloatTensor(gpu_matrix.size()).copy_(gpu_matrix)
 
-def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
+def perdict_transform(prediction, inp_dim, anchors, num_classes, CUDA = True):
     batch_size = prediction.size(0)
     stride =  inp_dim // prediction.size(2)
     grid_size = inp_dim // stride
@@ -62,32 +65,65 @@ def unique(tensor):
     tensor_res.copy_(unique_tensor)
     return tensor_res
 
-def bbox_iou(box1, box2):
-    """
-    Returns the IoU of two bounding boxes 
+def bbox_iou(box1, box2, x1y1x2y2=True):
+    if x1y1x2y2:
+        mx = min(box1[0], box2[0])
+        Mx = max(box1[2], box2[2])
+        my = min(box1[1], box2[1])
+        My = max(box1[3], box2[3])
+        w1 = box1[2] - box1[0]
+        h1 = box1[3] - box1[1]
+        w2 = box2[2] - box2[0]
+        h2 = box2[3] - box2[1]
+    else:
+        mx = min(box1[0]-box1[2]/2.0, box2[0]-box2[2]/2.0)
+        Mx = max(box1[0]+box1[2]/2.0, box2[0]+box2[2]/2.0)
+        my = min(box1[1]-box1[3]/2.0, box2[1]-box2[3]/2.0)
+        My = max(box1[1]+box1[3]/2.0, box2[1]+box2[3]/2.0)
+        w1 = box1[2]
+        h1 = box1[3]
+        w2 = box2[2]
+        h2 = box2[3]
+    uw = Mx - mx
+    uh = My - my
+    cw = w1 + w2 - uw
+    ch = h1 + h2 - uh
+    carea = 0
+    if cw <= 0 or ch <= 0:
+        return 0.0
+
+    area1 = w1 * h1
+    area2 = w2 * h2
+    carea = cw * ch
+    uarea = area1 + area2 - carea
+    return carea/uarea
+
+# def bbox_iou(box1, box2):
+#     """
+#     Returns the IoU of two bounding boxes 
     
     
-    """
-    #Get the coordinates of bounding boxes
-    b1_x1, b1_y1, b1_x2, b1_y2 = box1[:,0], box1[:,1], box1[:,2], box1[:,3]
-    b2_x1, b2_y1, b2_x2, b2_y2 = box2[:,0], box2[:,1], box2[:,2], box2[:,3]
+#     """
+#     #Get the coordinates of bounding boxes
+#     b1_x1, b1_y1, b1_x2, b1_y2 = box1[:,0], box1[:,1], box1[:,2], box1[:,3]
+#     b2_x1, b2_y1, b2_x2, b2_y2 = box2[:,0], box2[:,1], box2[:,2], box2[:,3]
     
-    #get the corrdinates of the intersection rectangle
-    inter_rect_x1 =  torch.max(b1_x1, b2_x1)
-    inter_rect_y1 =  torch.max(b1_y1, b2_y1)
-    inter_rect_x2 =  torch.min(b1_x2, b2_x2)
-    inter_rect_y2 =  torch.min(b1_y2, b2_y2)
+#     #get the corrdinates of the intersection rectangle
+#     inter_rect_x1 =  torch.max(b1_x1, b2_x1)
+#     inter_rect_y1 =  torch.max(b1_y1, b2_y1)
+#     inter_rect_x2 =  torch.min(b1_x2, b2_x2)
+#     inter_rect_y2 =  torch.min(b1_y2, b2_y2)
     
-    #Intersection area
-    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(inter_rect_y2 - inter_rect_y1 + 1, min=0)
+#     #Intersection area
+#     inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(inter_rect_y2 - inter_rect_y1 + 1, min=0)
  
-    #Union Area
-    b1_area = (b1_x2 - b1_x1 + 1)*(b1_y2 - b1_y1 + 1)
-    b2_area = (b2_x2 - b2_x1 + 1)*(b2_y2 - b2_y1 + 1)
+#     #Union Area
+#     b1_area = (b1_x2 - b1_x1 + 1)*(b1_y2 - b1_y1 + 1)
+#     b2_area = (b2_x2 - b2_x1 + 1)*(b2_y2 - b2_y1 + 1)
     
-    iou = inter_area / (b1_area + b2_area - inter_area)
+#     iou = inter_area / (b1_area + b2_area - inter_area)
     
-    return iou
+#     return iou
 
 def write_results(prediction, confidence, num_classes, nms_conf = 0.4):
     conf_mask = (prediction[:,:,4] > confidence).float().unsqueeze(2)
@@ -175,3 +211,132 @@ def write_results(prediction, confidence, num_classes, nms_conf = 0.4):
         return output
     except:
         return 0
+
+def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW, noobject_scale, object_scale, sil_thresh, seen):
+    nB = len(target)
+    target = target.view(nB,30*5)
+    nA = num_anchors
+    nC = num_classes
+    anchor_step = 1 #int(len(anchors)/num_anchors)
+    conf_mask  = torch.ones(nB, nA, nH, nW) * noobject_scale
+    coord_mask = torch.zeros(nB, nA, nH, nW)
+    cls_mask   = torch.zeros(nB, nA, nH, nW)
+    tx         = torch.zeros(nB, nA, nH, nW) 
+    ty         = torch.zeros(nB, nA, nH, nW) 
+    tw         = torch.zeros(nB, nA, nH, nW) 
+    th         = torch.zeros(nB, nA, nH, nW) 
+    tconf      = torch.zeros(nB, nA, nH, nW)
+    tcls       = torch.zeros(nB, nA, nH, nW) 
+
+    nAnchors = nA*nH*nW
+    nPixels  = nH*nW
+    for b in range(nB):
+        cur_pred_boxes = pred_boxes[b*nAnchors:(b+1)*nAnchors].t()
+        cur_ious = torch.zeros(nAnchors)
+        for t in range(30):
+            if target[b][t*5+1] == 0:
+                break
+            gx = target[b][t*5+1]*nW
+            gy = target[b][t*5+2]*nH
+            gw = target[b][t*5+3]*nW
+            gh = target[b][t*5+4]*nH
+            cur_gt_boxes = torch.FloatTensor([gx,gy,gw,gh]).repeat(nAnchors,1).t()
+            cur_ious = torch.max(cur_ious, bbox_ious(cur_pred_boxes, cur_gt_boxes, x1y1x2y2=False))
+        a = conf_mask[b].view(nA*nW*nH)
+        a[cur_ious>sil_thresh] = 0
+        a = a.view(nA,nH,nW)
+        conf_mask[b] = a
+    if seen < 12800:
+       if anchor_step == 4:
+           tx = torch.FloatTensor(anchors).view(nA, anchor_step).index_select(1, torch.LongTensor([2])).view(1,nA,1,1).repeat(nB,1,nH,nW)
+           ty = torch.FloatTensor(anchors).view(num_anchors, anchor_step).index_select(1, torch.LongTensor([2])).view(1,nA,1,1).repeat(nB,1,nH,nW)
+       else:
+           tx.fill_(0.5)
+           ty.fill_(0.5)
+       tw.zero_()
+       th.zero_()
+       coord_mask.fill_(1)
+
+    nGT = 0
+    nCorrect = 0
+    for b in range(nB):
+        for t in range(30):
+            if target[b][t*5+1] == 0:
+                break
+            nGT = nGT + 1
+            best_iou = 0.0
+            best_n = -1
+            min_dist = 10000
+            gx = target[b][t*5+1] * nW
+            gy = target[b][t*5+2] * nH
+            gi = int(gx)
+            gj = int(gy)
+            gw = target[b][t*5+3]*nW
+            gh = target[b][t*5+4]*nH
+            gt_box = [0, 0, gw, gh]
+            for n in range(nA):
+                aw = anchors[anchor_step*n][0]
+                ah = anchors[anchor_step*n][1]
+                anchor_box = [0, 0, aw, ah]
+                iou  = bbox_iou(anchor_box, gt_box, x1y1x2y2=False)
+                if anchor_step == 4:
+                    ax = anchors[anchor_step*n+2]
+                    ay = anchors[anchor_step*n+3]
+                    dist = pow(((gi+ax) - gx), 2) + pow(((gj+ay) - gy), 2)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_n = n
+                elif anchor_step==4 and iou == best_iou and dist < min_dist:
+                    best_iou = iou
+                    best_n = n
+                    min_dist = dist
+
+            gt_box = [gx, gy, gw, gh]
+            pred_box = pred_boxes[b*nAnchors+best_n*nPixels+gj*nW+gi]
+
+            coord_mask[b][best_n][gj][gi] = 1
+            cls_mask[b][best_n][gj][gi] = 1
+            conf_mask[b][best_n][gj][gi] = object_scale
+            tx[b][best_n][gj][gi] = target[b][t*5+1] * nW - gi
+            ty[b][best_n][gj][gi] = target[b][t*5+2] * nH - gj
+            tw[b][best_n][gj][gi] = math.log(gw/anchors[anchor_step*best_n][0])
+            th[b][best_n][gj][gi] = math.log(gh/anchors[anchor_step*best_n][1])
+            iou = bbox_iou(gt_box, pred_box, x1y1x2y2=False) # best_iou
+            tconf[b][best_n][gj][gi] = iou
+            tcls[b][best_n][gj][gi] = target[b][t*5]
+            if iou > 0.5:
+                nCorrect = nCorrect + 1
+
+    return nGT, nCorrect, coord_mask, conf_mask, cls_mask, tx, ty, tw, th, tconf, tcls
+
+
+def bbox_ious(boxes1, boxes2, x1y1x2y2=True):
+    if x1y1x2y2:
+        mx = torch.min(boxes1[0], boxes2[0])
+        Mx = torch.max(boxes1[2], boxes2[2])
+        my = torch.min(boxes1[1], boxes2[1])
+        My = torch.max(boxes1[3], boxes2[3])
+        w1 = boxes1[2] - boxes1[0]
+        h1 = boxes1[3] - boxes1[1]
+        w2 = boxes2[2] - boxes2[0]
+        h2 = boxes2[3] - boxes2[1]
+    else:
+        mx = torch.min(boxes1[0]-boxes1[2]/2.0, boxes2[0]-boxes2[2]/2.0)
+        Mx = torch.max(boxes1[0]+boxes1[2]/2.0, boxes2[0]+boxes2[2]/2.0)
+        my = torch.min(boxes1[1]-boxes1[3]/2.0, boxes2[1]-boxes2[3]/2.0)
+        My = torch.max(boxes1[1]+boxes1[3]/2.0, boxes2[1]+boxes2[3]/2.0)
+        w1 = boxes1[2]
+        h1 = boxes1[3]
+        w2 = boxes2[2]
+        h2 = boxes2[3]
+    uw = Mx - mx
+    uh = My - my
+    cw = w1 + w2 - uw
+    ch = h1 + h2 - uh
+    mask = ((cw <= 0) + (ch <= 0) > 0)
+    area1 = w1 * h1
+    area2 = w2 * h2
+    carea = cw * ch
+    carea[mask] = 0
+    uarea = area1 + area2 - carea
+    return carea/uarea
