@@ -293,7 +293,14 @@ def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW,
 
             gt_box = [gx, gy, gw, gh]
             pred_box = pred_boxes[b*nAnchors+best_n*nPixels+gj*nW+gi]
+            # if(gi>12 or gj>12):
+            #     print(coord_mask.size())
+            #     print(best_n)
+            #     print(gj)
+            #     print(gi)
+            #     print(target[b][t*5:t*5+5])
 
+                
             coord_mask[b][best_n][gj][gi] = 1
             cls_mask[b][best_n][gj][gi] = 1
             conf_mask[b][best_n][gj][gi] = object_scale

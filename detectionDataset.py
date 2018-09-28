@@ -136,10 +136,19 @@ class ToYolo(object):
         for i, obj in enumerate(label):
             obj = obj[-1:]+obj[:-1]
             new_labels[i][0] = obj[0]
-            new_labels[i][1] = float(obj[1]/width)
-            new_labels[i][2] = float(obj[2]/height)
-            new_labels[i][3] = float(obj[3]/width)
-            new_labels[i][4] = float(obj[4]/height)
+            new_labels[i][1] = min(0.99,float(obj[1]/width))
+            new_labels[i][2] = min(0.99,float(obj[2]/height))
+            new_labels[i][3] = min(0.99,float(obj[3]/width))
+            new_labels[i][4] = min(0.99,float(obj[4]/height))
+            test = np.array(new_labels)
+            if((new_labels[i][1:]>1).sum()>=1):
+                print("ca c'est bizarre!")
+                print(new_labels[i])
+                print(name)
+                print(width)
+                print(height)
+                print(obj)
+
         
         return {'image': trans(image),
                 'label': new_labels,
