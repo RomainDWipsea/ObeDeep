@@ -98,6 +98,8 @@ class objDet(Dataset):
         classes = self.classes
         # Create a Rectangle patch
         for obj in label:
+            print("obj")
+            print(obj)
             objx = obj[0]-int(obj[2]/2)
             objy = obj[1]-int(obj[3]/2)
             ax.add_patch(patches.Rectangle((objx,objy),obj[2],obj[3],linewidth=1,edgecolor='r',facecolor='none'))
